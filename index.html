@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AR Mask</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    video { display: none; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<script type="module">
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.module.js';
+  import { FaceMesh } from 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js';
+  import { Camera } from 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js';
+
+  const video = document.getElementById('video');
+
+  // Three.js setup
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({ alpha: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Video texture background
+  const videoTexture = new THREE.VideoTexture(video);
+  const videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+  const videoGeometry = new THREE.PlaneGeometry(2, 2);
+  const videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
+  videoMesh.position.z = -2;
+  scene.add(videoMesh);
+
+  // Mask plane
+  const maskTexture = new THREE.TextureLoader().load('mask.png'); // <-- your mask
+  const maskMaterial = new THREE.MeshBasicMaterial({ map: maskTexture, transparent: true });
+  const maskGeometry = new THREE.PlaneGeometry(1, 1); // adjust size
+  const maskMesh = new THREE.Mesh(maskGeometry, maskMaterial);
+  scene.add(maskMesh);
+
+  camera.position.z = 5;
+
+  // MediaPipe FaceMesh setup
+  const faceMesh = new FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  });
+
+  faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+
+  faceMesh.onResults(results => {
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+      const landmarks = results.multiFaceLandmarks[0];
+
+      // Estimate head center from key points (nose tip)
+      const nose = landmarks[1]; // normalized x, y, z
+      const x = (nose.x - 0.5) * 2; // normalize for Three.js plane
+      const y = -(nose.y - 0.5) * 2;
+      maskMesh.position.set(x, y, 0);
+
+      // Simple rotation based on face orientation (optional)
+      const left = landmarks[234]; 
+      const right = landmarks[454];
+      maskMesh.rotation.y = Math.atan2(left.x - right.x, 0.5); // crude yaw
+    }
+  });
+
+  // Webcam camera
+  const mpCamera = new Camera(video, {
+    onFrame: async () => { await faceMesh.send({ image: video }); },
+    width: 640,
+    height: 480
+  });
+  mpCamera.start();
+
+  // Render loop
+  function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
