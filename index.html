@@ -5,8 +5,12 @@
   <title>Afro Mask</title>
   <style>
     body { margin: 0; overflow: hidden; }
-    video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-    img { position: absolute; top: 0; left: 0; pointer-events: none; }
+    video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    #mask {
+      position: absolute;
+      pointer-events: none;
+      transform-origin: center center;
+    }
   </style>
 </head>
 <body>
@@ -14,64 +18,65 @@
 <video id="video" autoplay playsinline></video>
 <img id="mask" src="mask.png" width="200" />
 
-<script type="module">
-  import { FaceMesh } from 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js';
-
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script>
   const video = document.getElementById('video');
   const mask = document.getElementById('mask');
 
-  // Start webcam
-  navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-    video.srcObject = stream;
-  });
-
-  // Setup FaceMesh
-  const faceMesh = new FaceMesh({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  // Set up FaceMesh
+  const faceMesh = new FaceMesh.FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
   });
 
   faceMesh.setOptions({
     maxNumFaces: 1,
     refineLandmarks: true,
     minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    minTrackingConfidence: 0.5,
   });
 
-  faceMesh.onResults(results => {
+  faceMesh.onResults((results) => {
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
       const landmarks = results.multiFaceLandmarks[0];
 
-      // Head position approximation: nose tip
-      const nose = landmarks[1]; // x, y normalized
-      const x = nose.x * window.innerWidth - mask.width / 2;
-      const y = nose.y * window.innerHeight - mask.height / 2;
+      // Nose tip as reference
+      const nose = landmarks[1];
+      const x = nose.x * window.innerWidth;
+      const y = nose.y * window.innerHeight;
 
       mask.style.left = `${x}px`;
       mask.style.top = `${y}px`;
 
-      // Estimate simple yaw from left/right eye corners
-      const left = landmarks[33];
-      const right = landmarks[263];
-      const angle = Math.atan2(right.y - left.y, right.x - left.x);
+      // Rotate mask based on eye tilt
+      const leftEye = landmarks[33];
+      const rightEye = landmarks[263];
+      const angle = Math.atan2(
+        (rightEye.y - leftEye.y) * window.innerHeight,
+        (rightEye.x - leftEye.x) * window.innerWidth
+      );
       mask.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+
+      // Scale mask width to face width (distance between ears-ish)
+      const leftEar = landmarks[234];
+      const rightEar = landmarks[454];
+      const faceWidth = Math.hypot(
+        (rightEar.x - leftEar.x) * window.innerWidth,
+        (rightEar.y - leftEar.y) * window.innerHeight
+      );
+      mask.width = faceWidth * 1.2; // 1.2 = padding factor
     }
   });
 
-  async function runFaceMesh() {
-    const videoWidth = video.videoWidth;
-    const videoHeight = video.videoHeight;
-    video.width = videoWidth;
-    video.height = videoHeight;
-
-    async function frame() {
+  // Use MediaPipe camera util
+  const camera = new Camera(video, {
+    onFrame: async () => {
       await faceMesh.send({ image: video });
-      requestAnimationFrame(frame);
-    }
-    frame();
-  }
-
-  video.onloadeddata = () => runFaceMesh();
+    },
+    width: 640,
+    height: 480,
+  });
+  camera.start();
 </script>
-
 </body>
 </html>
